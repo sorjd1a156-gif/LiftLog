@@ -1,23 +1,32 @@
-name: Build Android APK
+name: Build Android APK (Stable 4.8.0)
 
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch: # 버튼을 눌러 수동으로도 빌드할 수 있게 만듭니다.
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      # 1. 깃허브에서 검증된 공식 v4.8.0 안정 버전 코드를 가져옵니다.
+      - name: Checkout stable v4.8.0 code
         uses: actions/checkout@v4
+        with:
+          ref: '4.8.0' # 최신 4.8.0 태그 기준 빌드
+
+      # 2. 내 main 브랜치에 저장해 둔 한글 번역 파일(ko.json)을 다운로드하여 앱 폴더에 주입합니다.
+      - name: Inject custom translation from main branch
+        run: |
+          mkdir -p app/i18n
+          curl -s https://raw.githubusercontent.com/${{ github.repository }}/main/app/i18n/ko.json -o app/i18n/ko.json
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17' # 안드로이드 빌드에 필요한 자바 버전
+          java-version: '17'
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -34,14 +43,24 @@ jobs:
           cd app
           npx expo prebuild --platform android
 
-      - name: Build Android APK (Debug)
+      # 3. 임시 서명 키 생성
+      - name: Generate Temporary Keystore
+        run: |
+          keytool -genkey -v -keystore release.keystore -alias my-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass mypassword -keypass mypassword -dname "CN=MyName, OU=MyOrg, O=MyCompany, L=MyCity, S=MyState, C=US"
+
+      # 4. 임시 키로 서명된 고성능 릴리즈 APK 빌드
+      - name: Build Android APK (Release Signed)
         run: |
           cd app/android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=../../release.keystore \
+            -Pandroid.injected.signing.store.password=mypassword \
+            -Pandroid.injected.signing.key.alias=my-alias \
+            -Pandroid.injected.signing.key.password=mypassword
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LiftLog-Korean-APK
-          path: app/android/app/build/outputs/apk/debug/*.apk
+          name: LiftLog-Korean-Release-APK
+          path: app/android/app/build/outputs/apk/release/*.apk
